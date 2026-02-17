@@ -53,6 +53,8 @@ public class GeneratorTests
         Assert.Contains("public static partial class FluentIconsRegular", text);
         Assert.DoesNotContain("public static partial class Regular", text);
         Assert.Contains("public const string Add24", text);
+        // FontFamily is emitted from the alias metadata
+        Assert.Contains("public const string FontFamily = \"FluentIcons\";", text);
     }
 
     [Fact]
@@ -141,6 +143,9 @@ public class GeneratorTests
         // Flat class: style appended to class name
         Assert.Contains("namespace MyCompany.Icons;", text);
         Assert.Contains("public static partial class MyCustomFontRegular", text);
+
+        // FontFamily is emitted from the alias metadata
+        Assert.Contains("public const string FontFamily = \"MyCustomFont\";", text);
 
         // No nesting — the class must NOT appear as a child of another class
         Assert.DoesNotContain("public static partial class MyCustomFont\n", text);
