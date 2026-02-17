@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g., 1.0.0)'
+        required: true
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  pack-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Restore
+        run: dotnet restore IconFont.Maui.SourceGenerator.sln
+      - name: Pack
+        run: |
+          VERSION=${{ inputs.version != '' && inputs.version || github.ref_name }}
+          dotnet pack src/IconFont.Maui.SourceGenerator/IconFont.Maui.SourceGenerator.csproj -c Release -p:Version=$VERSION -o artifacts
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget
+          path: artifacts/*.nupkg
+      - name: Enable NuGet Trusted Publishing
+        uses: nuget/setup-nuget@v1
+        with:
+          auth: true
+      - name: Push to NuGet (Trusted Publishing)
+        env:
+          NUGET_AUTH_TOKEN: ${{ env.NUGET_AUTH_TOKEN }}
+        run: |
+          dotnet nuget push artifacts/*.nupkg --source https://api.nuget.org/v3/index.json --skip-duplicate
