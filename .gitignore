@@ -1,0 +1,17 @@
+## Build
+bin/
+obj/
+artifacts/
+
+## IDE
+.vs/
+.vscode/
+*.user
+*.suo
+*.swp
+*~
+.DS_Store
+
+## NuGet
+*.nupkg
+*.snupkg

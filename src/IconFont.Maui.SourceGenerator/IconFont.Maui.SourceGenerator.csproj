@@ -1,0 +1,44 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>true</IsPackable>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <AnalyzerLanguage>cs</AnalyzerLanguage>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <NoWarn>$(NoWarn);RS2008</NoWarn>
+
+    <!-- NuGet packaging -->
+    <PackageId>IconFont.Maui.SourceGenerator</PackageId>
+    <Title>IconFont Source Generator for .NET MAUI</Title>
+    <Description>A Roslyn source generator that parses TTF icon fonts and emits strongly-typed glyph constants for .NET MAUI. Used by IconFont.Maui.Template and its consumers.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/jfversluis/IconFont</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/jfversluis/IconFont</PackageProjectUrl>
+    <PackageTags>maui;icons;font;source-generator;roslyn</PackageTags>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Pack the analyzer DLL into the correct location -->
+  <ItemGroup>
+    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+
+  <!-- Pack buildTransitive targets so consumers get MSBuild integration -->
+  <ItemGroup>
+    <None Include="buildTransitive\**" Pack="true" PackagePath="buildTransitive" />
+  </ItemGroup>
+
+</Project>

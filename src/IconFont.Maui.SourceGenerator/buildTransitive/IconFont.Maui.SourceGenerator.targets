@@ -1,0 +1,90 @@
+<Project>
+  <!--
+    IconFont.Maui.SourceGenerator buildTransitive targets.
+    This file is packed into the NuGet and imported automatically by consumers.
+    It wires up IconFontDefinition items as AdditionalFiles for the Roslyn generator
+    and generates IconFontConfig.g.cs, IconFontExtensions.g.cs, and the editorconfig.
+
+    Consumers must define IconFontDefinition items (typically via an imported .props file):
+
+      <IconFontDefinition Include="Resources/Fonts/MyFont.ttf">
+        <FontAlias>MyFont</FontAlias>
+        <FontClass>MyFont</FontClass>
+        <FontNamespace>MyCompany.Icons</FontNamespace>
+      </IconFontDefinition>
+  -->
+
+  <!-- Wire up font files as AdditionalFiles for the Roslyn source generator -->
+  <ItemGroup>
+    <_IconFontAdditional Include="@(IconFontDefinition)">
+      <Link>%(FileName)%(Extension)</Link>
+    </_IconFontAdditional>
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="@(_IconFontAdditional)" Link="%(_IconFontAdditional.Link)" />
+  </ItemGroup>
+
+  <!-- Generate config, extensions, and editorconfig at build time -->
+  <Target Name="IconFontGenerateConfig" BeforeTargets="BeforeCompile" Condition="'@(IconFontDefinition)' != ''">
+    <PropertyGroup>
+      <_IconFontConfigPath>$(IntermediateOutputPath)IconFontConfig.g.cs</_IconFontConfigPath>
+      <_IconFontEditorConfigPath>$(IntermediateOutputPath)IconFont.props.editorconfig</_IconFontEditorConfigPath>
+      <_IconFontExtensionsPath>$(IntermediateOutputPath)IconFontExtensions.g.cs</_IconFontExtensionsPath>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <!-- IconFontConfig.g.cs -->
+      <_IconFontConfigLines Include="namespace $(IconFontNamespace)%3B" />
+      <_IconFontConfigLines Include="public record IconFontConfig(string FontFile, string FontAlias, string ClassName, string Namespace)%3B" />
+      <_IconFontConfigLines Include="public static class IconFontConfigs" />
+      <_IconFontConfigLines Include="{" />
+      <_IconFontConfigLines Include="    public static readonly IconFontConfig[] All = new IconFontConfig[] {" />
+      <_IconFontConfigLines Include="        new IconFontConfig(&quot;%(IconFontDefinition.FileName)%(IconFontDefinition.Extension)&quot;, &quot;%(IconFontDefinition.FontAlias)&quot;, &quot;%(IconFontDefinition.FontClass)&quot;, &quot;%(IconFontDefinition.FontNamespace)&quot;)," />
+      <_IconFontConfigLines Include="    }%3B" />
+      <_IconFontConfigLines Include="    public static IconFontConfig Default =&gt; All[0]%3B" />
+      <_IconFontConfigLines Include="    public static IconFontConfig? TryGet(string className) =&gt; System.Array.Find(All, x =&gt; x.ClassName == className)%3B" />
+      <_IconFontConfigLines Include="}" />
+
+      <!-- Editorconfig for passing metadata to the Roslyn generator -->
+      <_IconFontEditorConfigLines Include="is_global = true" />
+      <_IconFontEditorConfigLines Include="#" />
+      <_IconFontEditorConfigLines Include="[/**/%(IconFontDefinition.FileName)%(IconFontDefinition.Extension)]&#x0A;build_metadata.AdditionalFiles.IconFontFile = %(IconFontDefinition.FileName)%(IconFontDefinition.Extension)&#x0A;build_metadata.AdditionalFiles.IconFontAlias = %(IconFontDefinition.FontAlias)&#x0A;build_metadata.AdditionalFiles.IconFontClass = %(IconFontDefinition.FontClass)&#x0A;build_metadata.AdditionalFiles.IconFontNamespace = %(IconFontDefinition.FontNamespace)" />
+
+      <!-- IconFontExtensions.g.cs -->
+      <_IconFontExtensionsLines Include="Line">
+        <Text>namespace $(IconFontNamespace);</Text>
+      </_IconFontExtensionsLines>
+      <_IconFontExtensionsLines Include="Line">
+        <Text>public static partial class IconFontBuilderExtensions</Text>
+      </_IconFontExtensionsLines>
+      <_IconFontExtensionsLines Include="Line">
+        <Text>{</Text>
+      </_IconFontExtensionsLines>
+      <_IconFontExtensionsLines Include="Line">
+        <Text>    public static Microsoft.Maui.Hosting.MauiAppBuilder UseIconFonts(this Microsoft.Maui.Hosting.MauiAppBuilder builder) =&gt; builder.UseIconFont();</Text>
+      </_IconFontExtensionsLines>
+      <_IconFontExtensionsLines Include="Line">
+        <Text>    // Per-font helpers</Text>
+      </_IconFontExtensionsLines>
+      <_IconFontExtensionsLines Include="Line">
+        <Text>    public static Microsoft.Maui.Hosting.MauiAppBuilder Use%(IconFontDefinition.FontClass)(this Microsoft.Maui.Hosting.MauiAppBuilder builder) =&gt; builder.UseIconFont(&quot;%(IconFontDefinition.FontClass)&quot;);</Text>
+      </_IconFontExtensionsLines>
+      <_IconFontExtensionsLines Include="Line">
+        <Text>}</Text>
+      </_IconFontExtensionsLines>
+    </ItemGroup>
+
+    <WriteLinesToFile File="$(_IconFontConfigPath)" Lines="@(_IconFontConfigLines)" Overwrite="true" />
+    <WriteLinesToFile File="$(_IconFontEditorConfigPath)" Lines="@(_IconFontEditorConfigLines)" Overwrite="true" />
+    <WriteLinesToFile File="$(_IconFontExtensionsPath)" Lines="@(_IconFontExtensionsLines->'%(Text)')" Overwrite="true" />
+
+    <ItemGroup>
+      <Compile Include="$(_IconFontConfigPath)" />
+      <Compile Include="$(_IconFontExtensionsPath)" />
+      <AnalyzerConfigFiles Include="$(_IconFontEditorConfigPath)" />
+      <AdditionalFiles Include="$(_IconFontConfigPath)" />
+    </ItemGroup>
+  </Target>
+
+</Project>
