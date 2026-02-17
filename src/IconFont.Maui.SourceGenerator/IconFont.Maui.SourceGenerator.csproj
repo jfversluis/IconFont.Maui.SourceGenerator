@@ -17,13 +17,12 @@
     <Title>IconFont Source Generator for .NET MAUI</Title>
     <Description>A Roslyn source generator that parses TTF icon fonts and emits strongly-typed glyph constants for .NET MAUI. Used by IconFont.Maui.Template and its consumers.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/jfversluis/IconFont</RepositoryUrl>
-    <PackageProjectUrl>https://github.com/jfversluis/IconFont</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/jfversluis/IconFont.Maui.SourceGenerator</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/jfversluis/IconFont.Maui.SourceGenerator</PackageProjectUrl>
     <PackageTags>maui;icons;font;source-generator;roslyn</PackageTags>
     <DevelopmentDependency>true</DevelopmentDependency>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <IncludeSymbols>false</IncludeSymbols>
   </PropertyGroup>
 
   <ItemGroup>
