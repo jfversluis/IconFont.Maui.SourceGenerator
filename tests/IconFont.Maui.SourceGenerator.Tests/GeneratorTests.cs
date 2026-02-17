@@ -49,8 +49,8 @@ public class GeneratorTests
         Assert.NotNull(generated);
         var text = generated!.ToString();
         Assert.Contains("namespace IconFontTemplate;", text);
-        // Style is appended to class name — no nested classes
-        Assert.Contains("public static partial class FluentIconsRegular", text);
+        // Single style in font: class name used as-is, no style suffix appended
+        Assert.Contains("public static partial class FluentIcons", text);
         Assert.DoesNotContain("public static partial class Regular", text);
         Assert.Contains("public const string Add24", text);
         // FontFamily is emitted from the alias metadata
@@ -140,25 +140,24 @@ public class GeneratorTests
         Assert.NotNull(generated);
         var text = generated!.ToString();
 
-        // Flat class: style appended to class name
+        // Single style in font: class name used as-is
         Assert.Contains("namespace MyCompany.Icons;", text);
-        Assert.Contains("public static partial class MyCustomFontRegular", text);
+        Assert.Contains("public static partial class MyCustomFont", text);
 
         // FontFamily is emitted from the alias metadata
         Assert.Contains("public const string FontFamily = \"MyCustomFont\";", text);
 
         // No nesting — the class must NOT appear as a child of another class
-        Assert.DoesNotContain("public static partial class MyCustomFont\n", text);
         Assert.DoesNotContain("public static partial class Regular", text);
 
-        // The generated code should compile with a consumer that does `MyCustomFontRegular.SomeGlyph`
-        // (simulating what {x:Static icons:MyCustomFontRegular.SomeGlyph} resolves to)
+        // The generated code should compile with a consumer that does `MyCustomFont.SomeGlyph`
+        // (simulating what {x:Static icons:MyCustomFont.SomeGlyph} resolves to)
         var consumerCode = """
             namespace Consumer
             {
                 class Test
                 {
-                    string GetGlyph() => MyCompany.Icons.MyCustomFontRegular.AccessTime20;
+                    string GetGlyph() => MyCompany.Icons.MyCustomFont.AccessTime20;
                 }
             }
             """;

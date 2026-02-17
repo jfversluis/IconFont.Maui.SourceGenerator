@@ -174,7 +174,23 @@ public sealed class FluentGlyphGenerator : ISourceGenerator
         foreach (var kvp in glyphsByStyle)
         {
             var styleName = kvp.Key;
-            var flatClassName = iconClassName + styleName;
+            // When there's only one style in the font, use the class name as-is to avoid
+            // awkward names like FluentIconsLightRegular or FluentIconsFilledFilled.
+            // When multiple styles exist, append the style to disambiguate.
+            // Special case: if class name already ends with the style, don't double-append.
+            string flatClassName;
+            if (glyphsByStyle.Count == 1)
+            {
+                flatClassName = iconClassName;
+            }
+            else if (iconClassName.EndsWith(styleName, StringComparison.OrdinalIgnoreCase))
+            {
+                flatClassName = iconClassName;
+            }
+            else
+            {
+                flatClassName = iconClassName + styleName;
+            }
             var glyphs = kvp.Value.OrderBy(g => g.ConstantName, StringComparer.Ordinal).ToList();
 
             builder.AppendLine($"public static partial class {flatClassName}");
