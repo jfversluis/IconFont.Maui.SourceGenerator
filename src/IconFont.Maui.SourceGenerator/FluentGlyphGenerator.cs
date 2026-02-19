@@ -581,24 +581,28 @@ private static class OpenTypeReader
             }
             else if (b >= 247 && b <= 250)
             {
+                if (i + 1 >= dictData.Length) break;
                 int val = (b - 247) * 256 + dictData[i + 1] + 108;
                 operandStack.Add(val);
                 i += 2;
             }
             else if (b >= 251 && b <= 254)
             {
+                if (i + 1 >= dictData.Length) break;
                 int val = -(b - 251) * 256 - dictData[i + 1] - 108;
                 operandStack.Add(val);
                 i += 2;
             }
             else if (b == 28)
             {
+                if (i + 2 >= dictData.Length) break;
                 int val = (short)((dictData[i + 1] << 8) | dictData[i + 2]);
                 operandStack.Add(val);
                 i += 3;
             }
             else if (b == 29)
             {
+                if (i + 4 >= dictData.Length) break;
                 int val = (dictData[i + 1] << 24) | (dictData[i + 2] << 16) | (dictData[i + 3] << 8) | dictData[i + 4];
                 operandStack.Add(val);
                 i += 5;
@@ -643,12 +647,12 @@ private static class OpenTypeReader
         {
             byte b = dictData[i];
             if (b >= 32 && b <= 246) { operandStack.Add(b - 139); i++; }
-            else if (b >= 247 && b <= 250) { operandStack.Add((b - 247) * 256 + dictData[i + 1] + 108); i += 2; }
-            else if (b >= 251 && b <= 254) { operandStack.Add(-(b - 251) * 256 - dictData[i + 1] - 108); i += 2; }
-            else if (b == 28) { operandStack.Add((short)((dictData[i + 1] << 8) | dictData[i + 2])); i += 3; }
-            else if (b == 29) { operandStack.Add((dictData[i + 1] << 24) | (dictData[i + 2] << 16) | (dictData[i + 3] << 8) | dictData[i + 4]); i += 5; }
+            else if (b >= 247 && b <= 250) { if (i + 1 >= dictData.Length) break; operandStack.Add((b - 247) * 256 + dictData[i + 1] + 108); i += 2; }
+            else if (b >= 251 && b <= 254) { if (i + 1 >= dictData.Length) break; operandStack.Add(-(b - 251) * 256 - dictData[i + 1] - 108); i += 2; }
+            else if (b == 28) { if (i + 2 >= dictData.Length) break; operandStack.Add((short)((dictData[i + 1] << 8) | dictData[i + 2])); i += 3; }
+            else if (b == 29) { if (i + 4 >= dictData.Length) break; operandStack.Add((dictData[i + 1] << 24) | (dictData[i + 2] << 16) | (dictData[i + 3] << 8) | dictData[i + 4]); i += 5; }
             else if (b == 30) { i++; while (i < dictData.Length) { byte nb = dictData[i++]; if ((nb & 0x0f) == 0x0f || (nb >> 4) == 0x0f) break; } operandStack.Add(0); }
-            else if (b == 12) { i += 2; operandStack.Clear(); }
+            else if (b == 12) { if (i + 1 >= dictData.Length) break; i += 2; operandStack.Clear(); }
             else
             {
                 if (b == 17 && operandStack.Count > 0) charStringsOffset = operandStack[operandStack.Count - 1];
@@ -797,6 +801,7 @@ private static class OpenTypeReader
             uint startCode = reader.ReadUInt32();
             uint endCode = reader.ReadUInt32();
             uint startGlyph = reader.ReadUInt32();
+            if (endCode - startCode > 0x10FFFF) continue; // skip unreasonably large ranges
             for (uint code = startCode; code <= endCode; code++)
             {
                 map[code] = (ushort)(startGlyph + (code - startCode));
