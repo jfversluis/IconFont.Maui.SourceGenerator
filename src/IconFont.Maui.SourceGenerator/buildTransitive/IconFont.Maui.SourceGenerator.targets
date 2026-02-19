@@ -62,9 +62,6 @@
         <Text>{</Text>
       </_IconFontExtensionsLines>
       <_IconFontExtensionsLines Include="Line">
-        <Text>    public static Microsoft.Maui.Hosting.MauiAppBuilder UseIconFonts(this Microsoft.Maui.Hosting.MauiAppBuilder builder) =&gt; builder.UseIconFont();</Text>
-      </_IconFontExtensionsLines>
-      <_IconFontExtensionsLines Include="Line">
         <Text>    // Per-font helpers</Text>
       </_IconFontExtensionsLines>
       <_IconFontExtensionsLines Include="Line">
