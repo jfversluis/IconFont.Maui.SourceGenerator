@@ -7,7 +7,7 @@
 
     Consumers must define IconFontDefinition items (typically via an imported .props file):
 
-      <IconFontDefinition Include="Resources/Fonts/MyFont.ttf">  <!-- .ttf or .otf -->
+      <IconFontDefinition Include="Resources/Fonts/MyFont.ttf"> (supports .ttf or .otf)
         <FontAlias>MyFont</FontAlias>
         <FontClass>MyFont</FontClass>
         <FontNamespace>MyCompany.Icons</FontNamespace>
