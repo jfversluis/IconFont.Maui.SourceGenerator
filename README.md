@@ -1,10 +1,10 @@
 # IconFont.Maui.SourceGenerator
 
-A Roslyn source generator that parses TTF icon fonts and emits strongly-typed glyph constants for .NET MAUI.
+A Roslyn source generator that parses TTF/OTF icon fonts and emits strongly-typed glyph constants for .NET MAUI.
 
 ## 📦 What it does
 
-Given a TTF font file with named glyphs (e.g., Fluent UI System Icons), this generator:
+Given a TTF or OTF font file with named glyphs (e.g., Fluent UI System Icons, Font Awesome), this generator:
 
 1. Reads the OpenType `post` and `cmap` tables at build time
 2. Extracts glyph names and Unicode codepoints
@@ -31,7 +31,7 @@ This package is consumed by font-specific libraries (like [IconFont.Maui.Templat
     <IconFontNamespace>MyCompany.Icons</IconFontNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <IconFontDefinition Include="Resources/Fonts/MyFont-Regular.ttf">
+    <IconFontDefinition Include="Resources/Fonts/MyFont-Regular.ttf">  <!-- .ttf or .otf -->
       <FontAlias>MyFont</FontAlias>
       <FontClass>MyFont</FontClass>
       <FontNamespace>MyCompany.Icons</FontNamespace>

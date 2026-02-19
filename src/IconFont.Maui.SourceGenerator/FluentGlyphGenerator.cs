@@ -47,21 +47,26 @@ public sealed class FluentGlyphGenerator : ISourceGenerator
 
     public void Execute(GeneratorExecutionContext context)
     {
-        var ttfFiles = context.AdditionalFiles
-            .Where(file => string.Equals(Path.GetExtension(file.Path), ".ttf", StringComparison.OrdinalIgnoreCase))
+        var fontFiles = context.AdditionalFiles
+            .Where(file =>
+            {
+                var ext = Path.GetExtension(file.Path);
+                return string.Equals(ext, ".ttf", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(ext, ".otf", StringComparison.OrdinalIgnoreCase);
+            })
             .ToList();
 
         var configMap = ParseConfig(context.AdditionalFiles);
 
-        context.ReportDiagnostic(Diagnostic.Create(InfoDescriptor, Location.None, $"AdditionalFiles={context.AdditionalFiles.Length}, TtfFiles={ttfFiles.Count}"));
+        context.ReportDiagnostic(Diagnostic.Create(InfoDescriptor, Location.None, $"AdditionalFiles={context.AdditionalFiles.Length}, FontFiles={fontFiles.Count}"));
 
-        if (ttfFiles.Count == 0)
+        if (fontFiles.Count == 0)
         {
             context.ReportDiagnostic(Diagnostic.Create(MissingFontDescriptor, Location.None, DefaultFontFileName));
             return;
         }
 
-        foreach (var fontFile in ttfFiles)
+        foreach (var fontFile in fontFiles)
         {
             var opts = context.AnalyzerConfigOptions.GetOptions(fontFile);
             opts.TryGetValue("build_metadata.AdditionalFiles.IconFontFile", out var fontFileName);
@@ -102,7 +107,7 @@ public sealed class FluentGlyphGenerator : ISourceGenerator
                     continue;
                 }
 
-                var glyphNames = OpenTypeReader.ReadGlyphNames(stream, postRecord);
+                var glyphNames = OpenTypeReader.ReadGlyphNames(stream, postRecord, tables);
                 var codepointToGlyph = OpenTypeReader.ReadCmapMappings(stream, cmapRecord);
 
                 if (glyphNames.Count == 0 || codepointToGlyph.Count == 0)
@@ -227,8 +232,15 @@ public sealed class FluentGlyphGenerator : ISourceGenerator
             return false;
         }
 
+        // Skip standard glyph names that aren't useful as icon constants
+        if (rawName == ".notdef" || rawName == ".null" || rawName == "nonmarkingreturn")
+        {
+            return false;
+        }
+
         var working = rawName;
 
+        // Fluent Icons style suffixes (underscore-separated)
         const string RegularSuffix = "_regular";
         const string FilledSuffix = "_filled";
         const string RtlSuffix = "_rtl";
@@ -255,13 +267,15 @@ public sealed class FluentGlyphGenerator : ISourceGenerator
             working = working.Substring(0, working.Length - LtrSuffix.Length);
         }
 
-        const string Prefix = "ic_fluent_";
-        if (working.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase))
+        // Strip known prefixes (Fluent Icons)
+        const string FluentPrefix = "ic_fluent_";
+        if (working.StartsWith(FluentPrefix, StringComparison.OrdinalIgnoreCase))
         {
-            working = working.Substring(Prefix.Length);
+            working = working.Substring(FluentPrefix.Length);
         }
 
-        var segments = working.Split(new[] { '_' }, StringSplitOptions.RemoveEmptyEntries);
+        // Split on underscores, hyphens, and periods (covers Fluent, Font Awesome, etc.)
+        var segments = working.Split(new[] { '_', '-', '.' }, StringSplitOptions.RemoveEmptyEntries);
         if (segments.Length == 0)
         {
             return false;
@@ -351,17 +365,30 @@ private static class OpenTypeReader
         return tables;
     }
 
-    internal static Dictionary<ushort, string> ReadGlyphNames(Stream stream, TableRecord postRecord)
+    internal static Dictionary<ushort, string> ReadGlyphNames(Stream stream, TableRecord postRecord, Dictionary<string, TableRecord>? allTables = null)
     {
         var reader = new BigEndianReader(stream);
         reader.Seek(postRecord.Offset);
 
         uint format = reader.ReadUInt32();
-        if (format != 0x00020000)
+        if (format == 0x00020000)
         {
-            return new Dictionary<ushort, string>();
+            return ReadPostFormat2(reader);
         }
 
+        // post format 3 (or other): no names in post table.
+        // Try CFF table for OTF fonts with CFF outlines.
+        if (allTables != null && allTables.TryGetValue("CFF ", out var cffRecord))
+        {
+            var cffNames = ReadCffGlyphNames(stream, cffRecord);
+            if (cffNames.Count > 0) return cffNames;
+        }
+
+        return new Dictionary<ushort, string>();
+    }
+
+    private static Dictionary<ushort, string> ReadPostFormat2(BigEndianReader reader)
+    {
         reader.Skip(28);
         ushort numGlyphs = reader.ReadUInt16();
         var glyphNameIndex = new ushort[numGlyphs];
@@ -400,6 +427,314 @@ private static class OpenTypeReader
         }
 
         return names;
+    }
+
+    /// <summary>
+    /// Reads glyph names from the CFF (Compact Font Format) table.
+    /// CFF fonts store glyph names in the CharStrings INDEX, with the name list
+    /// available via the charset structure.
+    /// </summary>
+    internal static Dictionary<ushort, string> ReadCffGlyphNames(Stream stream, TableRecord cffRecord)
+    {
+        var reader = new BigEndianReader(stream);
+        reader.Seek(cffRecord.Offset);
+
+        // CFF Header
+        byte major = reader.ReadByte();
+        byte minor = reader.ReadByte();
+        byte hdrSize = reader.ReadByte();
+        byte offSize = reader.ReadByte();
+
+        // Skip to end of header
+        reader.Seek(cffRecord.Offset + hdrSize);
+
+        // Name INDEX
+        SkipIndex(reader);
+
+        // Top DICT INDEX - we need to parse this to find charset offset and charstring count
+        var topDictData = ReadIndexData(reader);
+        if (topDictData.Count == 0) return new Dictionary<ushort, string>();
+
+        int charsetOffset = 0;
+        ParseTopDictForCharset(topDictData[0], out charsetOffset);
+
+        // String INDEX
+        var stringIndex = ReadIndexData(reader);
+
+        // Global Subr INDEX
+        SkipIndex(reader);
+
+        // Now we need to know how many glyphs there are.
+        // We can get this from the CharStrings INDEX which is referenced in Top DICT.
+        // For simplicity, parse the charset which starts after the header
+        // and uses the number of glyphs from charstrings.
+        // First, let's get the charstring count from Top DICT
+        int numGlyphs = GetCharStringCount(topDictData[0], stream, reader, cffRecord.Offset);
+        if (numGlyphs <= 0) return new Dictionary<ushort, string>();
+
+        var names = new Dictionary<ushort, string>();
+        names[0] = ".notdef"; // GID 0 is always .notdef
+
+        if (charsetOffset == 0)
+        {
+            // ISOAdobe charset - use standard SID names
+            return names;
+        }
+
+        reader.Seek(cffRecord.Offset + charsetOffset);
+        byte charsetFormat = reader.ReadByte();
+
+        if (charsetFormat == 0)
+        {
+            for (ushort gid = 1; gid < numGlyphs; gid++)
+            {
+                ushort sid = reader.ReadUInt16();
+                names[gid] = ResolveSid(sid, stringIndex);
+            }
+        }
+        else if (charsetFormat == 1)
+        {
+            ushort gid = 1;
+            while (gid < numGlyphs)
+            {
+                ushort first = reader.ReadUInt16();
+                byte nLeft = reader.ReadByte();
+                for (int i = 0; i <= nLeft && gid < numGlyphs; i++, gid++)
+                {
+                    names[gid] = ResolveSid((ushort)(first + i), stringIndex);
+                }
+            }
+        }
+        else if (charsetFormat == 2)
+        {
+            ushort gid = 1;
+            while (gid < numGlyphs)
+            {
+                ushort first = reader.ReadUInt16();
+                ushort nLeft = reader.ReadUInt16();
+                for (int i = 0; i <= nLeft && gid < numGlyphs; i++, gid++)
+                {
+                    names[gid] = ResolveSid((ushort)(first + i), stringIndex);
+                }
+            }
+        }
+
+        return names;
+    }
+
+    private static void SkipIndex(BigEndianReader reader)
+    {
+        ushort count = reader.ReadUInt16();
+        if (count == 0) return;
+        byte offSize = reader.ReadByte();
+        // Read offsets: count+1 offsets of offSize bytes each
+        uint lastOffset = 0;
+        for (int i = 0; i <= count; i++)
+        {
+            lastOffset = ReadOffset(reader, offSize);
+        }
+        // Skip data: lastOffset - 1 bytes
+        reader.Skip((int)(lastOffset - 1));
+    }
+
+    private static List<byte[]> ReadIndexData(BigEndianReader reader)
+    {
+        var result = new List<byte[]>();
+        ushort count = reader.ReadUInt16();
+        if (count == 0) return result;
+        byte offSize = reader.ReadByte();
+        var offsets = new uint[count + 1];
+        for (int i = 0; i <= count; i++)
+        {
+            offsets[i] = ReadOffset(reader, offSize);
+        }
+        for (int i = 0; i < count; i++)
+        {
+            int len = (int)(offsets[i + 1] - offsets[i]);
+            result.Add(len > 0 ? reader.ReadBytes(len) : Array.Empty<byte>());
+        }
+        return result;
+    }
+
+    private static uint ReadOffset(BigEndianReader reader, byte offSize)
+    {
+        uint val = 0;
+        for (int i = 0; i < offSize; i++)
+        {
+            val = (val << 8) | reader.ReadByte();
+        }
+        return val;
+    }
+
+    private static void ParseTopDictForCharset(byte[] dictData, out int charsetOffset)
+    {
+        charsetOffset = 0;
+        int i = 0;
+        var operandStack = new List<int>();
+        while (i < dictData.Length)
+        {
+            byte b = dictData[i];
+            if (b >= 32 && b <= 246)
+            {
+                operandStack.Add(b - 139);
+                i++;
+            }
+            else if (b >= 247 && b <= 250)
+            {
+                int val = (b - 247) * 256 + dictData[i + 1] + 108;
+                operandStack.Add(val);
+                i += 2;
+            }
+            else if (b >= 251 && b <= 254)
+            {
+                int val = -(b - 251) * 256 - dictData[i + 1] - 108;
+                operandStack.Add(val);
+                i += 2;
+            }
+            else if (b == 28)
+            {
+                int val = (short)((dictData[i + 1] << 8) | dictData[i + 2]);
+                operandStack.Add(val);
+                i += 3;
+            }
+            else if (b == 29)
+            {
+                int val = (dictData[i + 1] << 24) | (dictData[i + 2] << 16) | (dictData[i + 3] << 8) | dictData[i + 4];
+                operandStack.Add(val);
+                i += 5;
+            }
+            else if (b == 30)
+            {
+                // Real number - skip nibbles until 0xf terminator
+                i++;
+                while (i < dictData.Length)
+                {
+                    byte nibbles = dictData[i++];
+                    if ((nibbles & 0x0f) == 0x0f || (nibbles >> 4) == 0x0f) break;
+                }
+                operandStack.Add(0); // placeholder
+            }
+            else if (b == 12)
+            {
+                // Two-byte operator
+                i += 2;
+                operandStack.Clear();
+            }
+            else
+            {
+                // Single-byte operator
+                if (b == 15 && operandStack.Count > 0) // charset
+                {
+                    charsetOffset = operandStack[operandStack.Count - 1];
+                }
+                operandStack.Clear();
+                i++;
+            }
+        }
+    }
+
+    private static int GetCharStringCount(byte[] dictData, Stream stream, BigEndianReader reader, long cffBase)
+    {
+        // Parse Top DICT to find CharStrings offset (operator 17)
+        int charStringsOffset = 0;
+        int i = 0;
+        var operandStack = new List<int>();
+        while (i < dictData.Length)
+        {
+            byte b = dictData[i];
+            if (b >= 32 && b <= 246) { operandStack.Add(b - 139); i++; }
+            else if (b >= 247 && b <= 250) { operandStack.Add((b - 247) * 256 + dictData[i + 1] + 108); i += 2; }
+            else if (b >= 251 && b <= 254) { operandStack.Add(-(b - 251) * 256 - dictData[i + 1] - 108); i += 2; }
+            else if (b == 28) { operandStack.Add((short)((dictData[i + 1] << 8) | dictData[i + 2])); i += 3; }
+            else if (b == 29) { operandStack.Add((dictData[i + 1] << 24) | (dictData[i + 2] << 16) | (dictData[i + 3] << 8) | dictData[i + 4]); i += 5; }
+            else if (b == 30) { i++; while (i < dictData.Length) { byte nb = dictData[i++]; if ((nb & 0x0f) == 0x0f || (nb >> 4) == 0x0f) break; } operandStack.Add(0); }
+            else if (b == 12) { i += 2; operandStack.Clear(); }
+            else
+            {
+                if (b == 17 && operandStack.Count > 0) charStringsOffset = operandStack[operandStack.Count - 1];
+                operandStack.Clear();
+                i++;
+            }
+        }
+
+        if (charStringsOffset == 0) return 0;
+
+        reader.Seek(cffBase + charStringsOffset);
+        ushort count = reader.ReadUInt16();
+        return count;
+    }
+
+    // CFF Standard Strings (SID 0-390)
+    private static readonly string[] CffStandardStrings = new string[]
+    {
+        ".notdef", "space", "exclam", "quotedbl", "numbersign", "dollar", "percent",
+        "ampersand", "quoteright", "parenleft", "parenright", "asterisk", "plus", "comma",
+        "hyphen", "period", "slash", "zero", "one", "two", "three", "four", "five", "six",
+        "seven", "eight", "nine", "colon", "semicolon", "less", "equal", "greater",
+        "question", "at", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+        "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "bracketleft",
+        "backslash", "bracketright", "asciicircum", "underscore", "quoteleft", "a", "b", "c",
+        "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
+        "t", "u", "v", "w", "x", "y", "z", "braceleft", "bar", "braceright", "asciitilde",
+        "exclamdown", "cent", "sterling", "fraction", "yen", "florin", "section", "currency",
+        "quotesingle", "quotedblleft", "guillemotleft", "guilsinglleft", "guilsinglright",
+        "fi", "fl", "endash", "dagger", "daggerdbl", "periodcentered", "paragraph",
+        "bullet", "quotesinglbase", "quotedblbase", "quotedblright", "guillemotright",
+        "ellipsis", "perthousand", "questiondown", "grave", "acute", "circumflex", "tilde",
+        "macron", "breve", "dotaccent", "dieresis", "ring", "cedilla", "hungarumlaut",
+        "ogonek", "caron", "emdash", "AE", "ordfeminine", "Lslash", "Oslash", "OE",
+        "ordmasculine", "ae", "dotlessi", "lslash", "oslash", "oe", "germandbls",
+        "onesuperior", "logicalnot", "mu", "trademark", "Eth", "onehalf", "plusminus",
+        "Thorn", "onequarter", "divide", "brokenbar", "degree", "thorn", "threequarters",
+        "twosuperior", "registered", "minus", "eth", "multiply", "threesuperior", "copyright",
+        "Aacute", "Acircumflex", "Adieresis", "Agrave", "Aring", "Atilde", "Ccedilla",
+        "Eacute", "Ecircumflex", "Edieresis", "Egrave", "Iacute", "Icircumflex", "Idieresis",
+        "Igrave", "Ntilde", "Oacute", "Ocircumflex", "Odieresis", "Ograve", "Otilde",
+        "Scaron", "Uacute", "Ucircumflex", "Udieresis", "Ugrave", "Yacute", "Ydieresis",
+        "Zcaron", "aacute", "acircumflex", "adieresis", "agrave", "aring", "atilde",
+        "ccedilla", "eacute", "ecircumflex", "edieresis", "egrave", "iacute", "icircumflex",
+        "idieresis", "igrave", "ntilde", "oacute", "ocircumflex", "odieresis", "ograve",
+        "otilde", "scaron", "uacute", "ucircumflex", "udieresis", "ugrave", "yacute",
+        "ydieresis", "zcaron", "exclamsmall", "Hungarumlautsmall", "dollaroldstyle",
+        "dollarsuperior", "ampersandsmall", "Acutesmall", "parenleftsuperior",
+        "parenrightsuperior", "twodotenleader", "onedotenleader", "zerooldstyle",
+        "oneoldstyle", "twooldstyle", "threeoldstyle", "fouroldstyle", "fiveoldstyle",
+        "sixoldstyle", "sevenoldstyle", "eightoldstyle", "nineoldstyle", "commasuperior",
+        "threequartersemdash", "periodsuperior", "questionsmall", "asuperior", "bsuperior",
+        "centsuperior", "dsuperior", "esuperior", "isuperior", "lsuperior", "msuperior",
+        "nsuperior", "osuperior", "rsuperior", "ssuperior", "tsuperior", "ff", "ffi", "ffl",
+        "parenleftinferior", "parenrightinferior", "Circumflexsmall", "hyphensuperior",
+        "Gravesmall", "Asmall", "Bsmall", "Csmall", "Dsmall", "Esmall", "Fsmall", "Gsmall",
+        "Hsmall", "Ismall", "Jsmall", "Ksmall", "Lsmall", "Msmall", "Nsmall", "Osmall",
+        "Psmall", "Qsmall", "Rsmall", "Ssmall", "Tsmall", "Usmall", "Vsmall", "Wsmall",
+        "Xsmall", "Ysmall", "Zsmall", "colonmonetary", "onefitted", "rupiah", "Tildesmall",
+        "exclamdownsmall", "centoldstyle", "Lslashsmall", "Scaronsmall", "Zcaronsmall",
+        "Dieresissmall", "Brevesmall", "Caronsmall", "Dotaccentsmall", "Macronsmall",
+        "figuredash", "hypheninferior", "Ogoneksmall", "Ringsmall", "Cedillasmall",
+        "questiondownsmall", "oneeighth", "threeeighths", "fiveeighths", "seveneighths",
+        "onethird", "twothirds", "zerosuperior", "foursuperior", "fivesuperior",
+        "sixsuperior", "sevensuperior", "eightsuperior", "ninesuperior", "zeroinferior",
+        "oneinferior", "twoinferior", "threeinferior", "fourinferior", "fiveinferior",
+        "sixinferior", "seveninferior", "eightinferior", "nineinferior", "centinferior",
+        "dollarinferior", "periodinferior", "commainferior", "Agravesmall", "Aacutesmall",
+        "Acircumflexsmall", "Atildesmall", "Adieresissmall", "Aringsmall", "AEsmall",
+        "Ccedillasmall", "Egravesmall", "Eacutesmall", "Ecircumflexsmall", "Edieresissmall",
+        "Igravesmall", "Iacutesmall", "Icircumflexsmall", "Idieresissmall", "Ethsmall",
+        "Ntildesmall", "Ogravesmall", "Oacutesmall", "Ocircumflexsmall", "Otildesmall",
+        "Odieresissmall", "OEsmall", "Oslashsmall", "Ugravesmall", "Uacutesmall",
+        "Ucircumflexsmall", "Udieresissmall", "Yacutesmall", "Thornsmall", "Ydieresissmall",
+        "001.000", "001.001", "001.002", "001.003", "Black", "Bold", "Book", "Light",
+        "Medium", "Regular", "Roman", "Semibold",
+    };
+
+    private static string ResolveSid(ushort sid, List<byte[]> stringIndex)
+    {
+        if (sid < CffStandardStrings.Length)
+            return CffStandardStrings[sid];
+        int idx = sid - CffStandardStrings.Length;
+        if (idx >= 0 && idx < stringIndex.Count)
+            return Encoding.ASCII.GetString(stringIndex[idx]);
+        return $"glyph{sid}";
     }
 
     internal static Dictionary<uint, ushort> ReadCmapMappings(Stream stream, TableRecord cmapRecord)

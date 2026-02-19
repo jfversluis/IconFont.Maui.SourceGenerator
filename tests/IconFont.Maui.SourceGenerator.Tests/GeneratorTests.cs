@@ -170,6 +170,53 @@ public class GeneratorTests
             string.Join("\n", emitResult.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)));
     }
 
+    /// <summary>
+    /// Verifies that the source generator works with OTF (OpenType) font files,
+    /// not just TTF. This is important for fonts like Font Awesome 7 which ship OTF only.
+    /// </summary>
+    [Fact]
+    public void Generates_Glyphs_From_OTF_Font()
+    {
+        var fontPath = Path.GetFullPath(Path.Combine(GetRepoRoot(), "tests/TestFonts/FontAwesome7-Solid.otf"));
+        Assert.True(File.Exists(fontPath), $"OTF test font not found at {fontPath}");
+
+        var compilation = CSharpCompilation.Create(
+            "OtfTests",
+            new[] { CSharpSyntaxTree.ParseText("""namespace Dummy { class C { } }""") },
+            new[] { MetadataReference.CreateFromFile(typeof(object).Assembly.Location) },
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        var generator = new FluentGlyphGenerator();
+        var driver = CSharpGeneratorDriver.Create(new ISourceGenerator[] { generator },
+            additionalTexts: new[] { new TestAdditionalText(fontPath) },
+            optionsProvider: TestAnalyzerConfigOptionsProvider.With(
+                perFile: new()
+                {
+                    [fontPath] = new()
+                    {
+                        ["build_metadata.AdditionalFiles.IconFontFile"] = Path.GetFileName(fontPath),
+                        ["build_metadata.AdditionalFiles.IconFontAlias"] = "FontAwesomeSolid",
+                        ["build_metadata.AdditionalFiles.IconFontClass"] = "FontAwesomeSolid",
+                        ["build_metadata.AdditionalFiles.IconFontNamespace"] = "IconFont.FontAwesome",
+                    }
+                }));
+
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out var diagnostics);
+        Assert.Empty(diagnostics.Where(d => d.Id != "IFMT900"));
+
+        var generated = outputCompilation.SyntaxTrees.FirstOrDefault(t => t.FilePath.EndsWith("FontAwesomeSolid.Generated.g.cs"));
+        Assert.NotNull(generated);
+        var text = generated!.ToString();
+        Assert.Contains("namespace IconFont.FontAwesome;", text);
+        Assert.Contains("public static partial class FontAwesomeSolid", text);
+        Assert.Contains("public const string FontFamily = \"FontAwesomeSolid\";", text);
+        // Font Awesome icons should have recognizable glyph names (hyphen-based converted to PascalCase)
+        Assert.Contains("const string", text);
+        Assert.Contains("Hashtag", text);         // hashtag icon
+        Assert.Contains("DollarSign", text);      // dollar-sign icon
+        Assert.Contains("HandHoldingMedical", text); // hand-holding-medical icon
+    }
+
     private static string GetRepoRoot()
     {
         var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
